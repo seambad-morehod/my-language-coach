@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<meta name="mobile-web-app-capable" content="yes">
+<title>My Language Coach</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fraunces:opsz,wght@9..144,300;9..144,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- HOME -->
+  <section class="screen active" id="home">
+    <header class="top">
+      <p class="eyebrow" id="greeting">Good evening</p>
+      <h1 class="title">My Language<br><em>Coach</em></h1>
+    </header>
+    <p class="section-label">Choose a language</p>
+    <div class="lang-list">
+      <button class="lang-card" data-lang="en">
+        <span class="flag" data-flag="en"></span>
+        <span class="lang-text"><strong>English</strong><small>United States</small></span>
+        <span class="lang-meta" data-today="en">0 min today</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <button class="lang-card" data-lang="lv">
+        <span class="flag" data-flag="lv"></span>
+        <span class="lang-text"><strong>Latviešu</strong><small>Latvian</small></span>
+        <span class="lang-meta" data-today="lv">0 min today</span>
+        <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+    <div class="summary-card">
+      <div><span class="k">Streak</span><span class="v" id="sum-streak">0</span><span class="u">days</span></div>
+      <div><span class="k">This week</span><span class="v" id="sum-week">0</span><span class="u">min</span></div>
+      <div><span class="k">Sessions</span><span class="v" id="sum-count">0</span><span class="u">total</span></div>
+    </div>
+  </section>
+
+  <!-- CONVERSATION -->
+  <section class="screen" id="conversation">
+    <header class="conv-top">
+      <button class="icon-btn" id="conv-back" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="conv-title"><span class="flag sm" id="conv-flag"></span><span id="conv-name">English</span></div>
+      <span class="status-pill" id="conv-status">Ready</span>
+    </header>
+
+    <div class="timer-wrap">
+      <svg class="ring" viewBox="0 0 220 220">
+        <circle class="ring-bg" cx="110" cy="110" r="100"/>
+        <circle class="ring-fg" id="ring-fg" cx="110" cy="110" r="100"/>
+      </svg>
+      <div class="timer-inner">
+        <span class="timer-label" id="timer-label">Session goal</span>
+        <span class="timer" id="timer">10:00</span>
+        <span class="timer-sub" id="timer-sub">10 minute target</span>
+      </div>
+    </div>
+
+    <div class="mock-transcript" id="transcript">
+      <p class="coach-line" id="coach-line">Tap <b>Start Conversation</b> when you're ready.</p>
+    </div>
+
+    <div class="mic-zone">
+      <div class="waves" id="waves"><span></span><span></span><span></span></div>
+      <button class="mic" id="mic" aria-label="Microphone" disabled>
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
+      </button>
+      <span class="mic-hint" id="mic-hint">Microphone off</span>
+    </div>
+
+    <div class="conv-actions">
+      <button class="btn primary" id="btn-start">Start Conversation</button>
+      <button class="btn danger hidden" id="btn-end">End Conversation</button>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <section class="screen" id="stats">
+    <header class="top">
+      <p class="eyebrow">Your progress</p>
+      <h1 class="title">Statistics</h1>
+    </header>
+    <div class="total-card">
+      <span class="k">Total speaking time</span>
+      <span class="big" id="st-total">0h 00m</span>
+      <div class="split-bar"><span id="bar-en"></span><span id="bar-lv"></span></div>
+      <div class="split-row">
+        <div><span class="flag xs" data-flag="en"></span>English <b id="st-en">0m</b></div>
+        <div><span class="flag xs" data-flag="lv"></span>Latvian <b id="st-lv">0m</b></div>
+      </div>
+    </div>
+
+    <div class="cal-card">
+      <div class="cal-head">
+        <button class="icon-btn sm" id="cal-prev" aria-label="Previous month"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <span id="cal-title">Month</span>
+        <button class="icon-btn sm" id="cal-next" aria-label="Next month"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+      </div>
+      <div class="cal-grid dow"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+      <div class="cal-grid" id="cal-grid"></div>
+      <div class="cal-legend"><i class="d en"></i>English <i class="d lv"></i>Latvian</div>
+    </div>
+
+    <p class="section-label">Session history</p>
+    <ul class="history" id="history"></ul>
+  </section>
+
+  <!-- NAV -->
+  <nav class="tabbar" id="tabbar">
+    <button class="tab active" data-go="home"><svg viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg><span>Practice</span></button>
+    <button class="tab" data-go="stats"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V4M19 20v-6"/></svg><span>Statistics</span></button>
+  </nav>
+
+  <div class="sheet-backdrop hidden" id="confirm">
+    <div class="sheet">
+      <h3>End conversation?</h3>
+      <p id="confirm-text">Your session will be saved.</p>
+      <button class="btn danger" id="confirm-yes">End &amp; Save</button>
+      <button class="btn ghost" id="confirm-no">Keep Talking</button>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
