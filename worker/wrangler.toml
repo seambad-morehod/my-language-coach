@@ -7,3 +7,10 @@ compatibility_date = "2026-11-01"
 [vars]
 GEMINI_MODEL = "gemini-3.8-live"
 ALLOWED_ORIGINS = "https://seambad-morehod.github.io,http://localhost:8080"
+
+# Keep Workers Logs on (matches the dashboard setting)
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
