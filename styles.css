@@ -146,3 +146,5 @@ svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.6;stroke
 .toast{position:absolute;left:50%;bottom:calc(var(--tab-h) + var(--safe-b) + 16px);transform:translate(-50%,20px);opacity:0;
   background:var(--s3);color:var(--tx);padding:12px 18px;border-radius:14px;font-size:14px;z-index:30;transition:all .3s;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+.field{height:54px;border-radius:16px;background:var(--bg);border:1px solid var(--line);color:var(--tx);padding:0 16px;font:inherit;font-size:16px;margin-bottom:6px;outline:none;user-select:text}
+.field:focus{border-color:rgba(201,169,110,.45)}

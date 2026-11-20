@@ -111,11 +111,64 @@ function startConversation(resumeStart) {
   try { localStorage.setItem(ACTIVE_KEY, JSON.stringify({ lang: conv.lang, start: conv.start })); } catch {}
   $('#btn-start').classList.add('hidden'); $('#btn-end').classList.remove('hidden');
   $('#mic').disabled = false; setMic(true);
-  conv.lineIdx = 0; showLine();
-  conv.lineTimer = setInterval(() => { if (conv.mic) showLine(); }, 9000);
   update(); conv.tick = setInterval(update, 250);
+  if (Live.enabled() && !resumeStart) beginLive();
+  else if (Live.enabled()) { setMic(false); $('#coach-line').textContent = 'Session resumed — tap the microphone to reconnect.'; }
+  else startMockLines();
   requestWakeLock();
 }
+function startMockLines() {
+  clearInterval(conv.lineTimer);
+  conv.lineIdx = 0; showLine();
+  conv.lineTimer = setInterval(() => { if (conv.mic) showLine(); }, 9000);
+}
+
+/* ---------- Gemini Live (voice) ---------- */
+async function beginLive() {
+  if (!Live.getPass()) return askPassphrase();
+  conv.live = 'connecting';
+  $('#coach-line').textContent = 'Connecting to your coach…';
+  try {
+    await Live.start(conv.lang, {
+      status: st => {
+        conv.live = st;
+        if (st === 'live') { $('#coach-line').textContent = conv.lang === 'lv' ? 'Sāc runāt — es klausos.' : 'Start speaking — I\'m listening.'; setMic(conv.mic); }
+        if (st === 'reconnecting') $('#mic-hint').textContent = 'Reconnecting…';
+      },
+      coach: text => { $('#coach-line').textContent = text; },
+      speaking: on => $('#waves').classList.toggle('on', on || conv.mic),
+      error: msg => liveFailed(msg)
+    });
+    Live.setMuted(!conv.mic);
+  } catch (e) { liveFailed(e); }
+}
+function liveFailed(e) {
+  conv.live = null;
+  if (!conv.running) return;
+  const code = e?.status || '';
+  const msg = code === 401 ? 'Wrong passphrase' : code === 429 ? 'Free-tier limit reached — try later'
+    : e?.name === 'NotAllowedError' ? 'Microphone permission denied' : 'Voice coach unavailable';
+  if (code === 401) Live.setPass('');
+  toast(msg + ' · timer keeps running');
+  setMic(false);
+  $('#coach-line').textContent = 'Voice coach offline. Tap the microphone to retry.';
+}
+function askPassphrase() {
+  $('#pass-input').value = '';
+  $('#pass').classList.remove('hidden');
+  setTimeout(() => $('#pass-input').focus(), 50);
+}
+$('#pass-save').addEventListener('click', () => {
+  const v = $('#pass-input').value.trim();
+  if (!v) return;
+  Live.setPass(v); $('#pass').classList.add('hidden');
+  if (conv.running) beginLive();
+});
+$('#pass-cancel').addEventListener('click', () => {
+  $('#pass').classList.add('hidden');
+  if (conv.running) { toast('Demo mode · no voice coach'); startMockLines(); }
+});
+
 function elapsed() { return Math.floor((Date.now() - conv.start) / 1000); }
 function update() {
   const e = elapsed(), timer = $('#timer');
@@ -141,10 +194,15 @@ function showLine() {
 }
 function setMic(on) {
   conv.mic = on;
+  if (Live.active()) Live.setMuted(!on);
   $('#mic').classList.toggle('on', on); $('#waves').classList.toggle('on', on);
   $('#mic-hint').textContent = !conv.running ? 'Microphone off' : on ? 'Listening… tap to mute' : 'Muted — tap to speak';
 }
-$('#mic').addEventListener('click', () => { if (conv.running) { setMic(!conv.mic); update(); } });
+$('#mic').addEventListener('click', () => {
+  if (!conv.running) return;
+  if (Live.enabled() && !Live.active() && !conv.lineTimer) { setMic(true); beginLive(); return; }
+  setMic(!conv.mic); update();
+});
 $('#btn-start').addEventListener('click', () => startConversation());
 $('#btn-end').addEventListener('click', askEnd);
 
@@ -160,7 +218,8 @@ $('#confirm').addEventListener('click', e => { if (e.target.id === 'confirm') $(
 $('#confirm-yes').addEventListener('click', () => {
   $('#confirm').classList.add('hidden');
   const dur = elapsed();
-  clearInterval(conv.tick); clearInterval(conv.lineTimer);
+  clearInterval(conv.tick); clearInterval(conv.lineTimer); conv.lineTimer = null;
+  Live.stop(); conv.live = null;
   conv.running = false;
   try { localStorage.removeItem(ACTIVE_KEY); } catch {}
   releaseWakeLock();

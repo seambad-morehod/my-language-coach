@@ -127,8 +127,19 @@
       <button class="btn ghost" id="confirm-no">Keep Talking</button>
     </div>
   </div>
+  <div class="sheet-backdrop hidden" id="pass">
+    <div class="sheet">
+      <h3>Connect your coach</h3>
+      <p>Enter the access passphrase you set on your backend. It is stored only on this phone.</p>
+      <input class="field" id="pass-input" type="password" autocomplete="off" placeholder="Access passphrase">
+      <button class="btn primary" id="pass-save">Connect</button>
+      <button class="btn ghost" id="pass-cancel">Use demo mode</button>
+    </div>
+  </div>
   <div class="toast" id="toast"></div>
 </div>
+<script src="config.js"></script>
+<script src="live.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

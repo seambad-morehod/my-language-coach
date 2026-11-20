@@ -1,2 +1,11 @@
 .DS_Store
 *.log
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+**/.dev.vars
+# Tooling
+node_modules/
+.wrangler/

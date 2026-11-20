@@ -1,0 +1,3 @@
+# Copy to worker/.dev.vars for local testing (that file is git-ignored). Never commit real values.
+GEMINI_API_KEY=your-key-here
+ACCESS_PASSPHRASE=choose-a-long-random-passphrase

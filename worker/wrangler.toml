@@ -1,0 +1,9 @@
+name = "my-language-coach-api"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+# Public, non-secret settings. Secrets (GEMINI_API_KEY, ACCESS_PASSPHRASE) are set with
+# `npx wrangler secret put ...` and are NEVER stored in this file or in Git.
+[vars]
+GEMINI_MODEL = "gemini-3.8-live"
+ALLOWED_ORIGINS = "https://seambad-morehod.github.io,http://localhost:8080"
