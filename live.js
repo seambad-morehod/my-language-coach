@@ -45,7 +45,7 @@ const Live = (() => {
 
   async function start(lang, cb) {
     if (s) stop();
-    s = { lang, cb, muted: false, handle: null, closing: false, reconnects: 0, playAt: 0, sources: new Set(), coachText: '' };
+    s = { lang, cb, muted: false, handle: null, closing: false, reconnects: 0, playAt: 0, sources: new Set(), coachText: '', cancelled: new Set() };
     const me = s;
     cb.status?.('connecting');
     const tk = await fetchToken(lang);          // throws on auth / quota errors
@@ -101,12 +101,38 @@ const Live = (() => {
     if (m.setupComplete) { s.ready = true; s.reconnects = 0; s.cb.status?.('live'); }
     if (m.sessionResumptionUpdate?.resumable && m.sessionResumptionUpdate.newHandle) s.handle = m.sessionResumptionUpdate.newHandle;
     if (m.goAway && s.handle) { s.cb.status?.('reconnecting'); try { s.ws.close(); } catch {} } // onclose resumes
+    if (m.toolCall) for (const fc of m.toolCall.functionCalls || []) runTool(fc);
+    if (m.toolCallCancellation) for (const id of m.toolCallCancellation.ids || []) s.cancelled.add(id);
     const sc = m.serverContent; if (!sc) return;
     if (sc.interrupted) flushPlayback();
     for (const p of sc.modelTurn?.parts || []) if (p.inlineData?.data) play(unb64(p.inlineData.data));
     if (sc.outputTranscription?.text) { s.coachText += sc.outputTranscription.text; s.cb.coach?.(s.coachText.trim()); }
     if (sc.inputTranscription?.text) s.cb.user?.(sc.inputTranscription.text);
     if (sc.turnComplete) s.coachText = '';
+  }
+
+  // Gemini asked for web_search: run it on our Worker and return the result into the SAME session.
+  async function runTool(fc) {
+    const me = s; if (!me) return;
+    let response;
+    if (fc.name !== 'web_search') response = { error: 'unknown_function' };
+    else {
+      me.cb.searching?.(true);
+      try {
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 12000);
+        const r = await fetch(window.MLC_CONFIG.backendUrl.replace(/\/$/, '') + '/search', {
+          method: 'POST', signal: ctrl.signal,
+          headers: { 'Content-Type': 'application/json', 'X-Access-Key': getPass() },
+          body: JSON.stringify({ lang: me.lang, args: fc.args || {} })
+        });
+        clearTimeout(t);
+        const d = await r.json().catch(() => ({}));
+        response = d.ok ? { result: d.result, source: d.source } : { error: d.error || 'search_failed' };
+      } catch { response = { error: 'search_unavailable' }; }
+      me.cb.searching?.(false);
+    }
+    if (s !== me || me.cancelled.has(fc.id) || me.ws?.readyState !== 1) return;
+    me.ws.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: fc.id, name: fc.name, response: { ...response, scheduling: 'WHEN_IDLE' } }] } }));
   }
 
   function play(buf) {

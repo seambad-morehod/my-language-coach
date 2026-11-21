@@ -3,13 +3,14 @@
 // that is locked to one model, one language and one configuration.
 // Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens , https://ai.google.dev/api/live
 import { LANGUAGES } from './languages.js';
+import { SEARCH_TOOL, SEARCH_RULE, webSearch } from './search.js';
 
 const TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const SESSION_HOURS = 2;      // token may carry an ongoing session (with resumption) for 2 h
 const START_WINDOW_MS = 60e3; // a new session must be started within 60 s
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const origin = req.headers.get('Origin') || '';
     const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
     const cors = allowed.includes(origin) ? {
@@ -26,14 +27,23 @@ export default {
     const url = new URL(req.url);
     if (req.method === 'OPTIONS') return new Response(null, { status: allowed.includes(origin) ? 204 : 403, headers: cors });
     if (url.pathname === '/health') return json({ ok: true, model: env.GEMINI_MODEL });
-    if (url.pathname !== '/token' || req.method !== 'POST') return json({ error: 'not_found' }, 404);
+    if (!['/token', '/search'].includes(url.pathname) || req.method !== 'POST') return json({ error: 'not_found' }, 404);
     if (!allowed.includes(origin)) return json({ error: 'origin_not_allowed' }, 403);
     if (!env.GEMINI_API_KEY || !env.ACCESS_PASSPHRASE) return json({ error: 'server_not_configured' }, 500);
-    if (!(await safeEqual(req.headers.get('X-Access-Key') || '', env.ACCESS_PASSPHRASE))) return json({ error: 'unauthorized' }, 401);
+    const key = req.headers.get('X-Access-Key') || '';
+    const authed = (await safeEqual(key, env.ACCESS_PASSPHRASE)) ||
+      (env.TEST_ACCESS_KEY ? await safeEqual(key, env.TEST_ACCESS_KEY) : false); // TEST_ACCESS_KEY exists only on test versions
+    if (!authed) return json({ error: 'unauthorized' }, 401);
 
     let body; try { body = await req.json(); } catch { return json({ error: 'bad_request' }, 400); }
     const lang = LANGUAGES[body?.lang];
     if (!lang) return json({ error: 'unknown_language' }, 400);
+
+    if (url.pathname === '/search') {
+      const res = await webSearch(body.args, body.lang, env, ctx).catch(() => ({ ok: false, error: 'search_error' }));
+      console.log('search', body.lang, body.args?.topic, res.ok ? res.source : res.error);
+      return json(res);
+    }
 
     const model = `models/${env.GEMINI_MODEL}`;
     const now = Date.now();
@@ -43,7 +53,8 @@ export default {
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: lang.voice } } }
       },
-      systemInstruction: { parts: [{ text: lang.instruction }] },
+      systemInstruction: { parts: [{ text: lang.instruction + '\n\n' + SEARCH_RULE }] },
+      tools: [SEARCH_TOOL],
       contextWindowCompression: { slidingWindow: {} },      // lifts the 15-min audio session limit
       inputAudioTranscription: { languageCodes: [lang.code] },
       outputAudioTranscription: { languageCodes: [lang.code] }
