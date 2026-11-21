@@ -7,10 +7,6 @@ import { LANGUAGES } from './languages.js';
 const TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const SESSION_HOURS = 2;      // token may carry an ongoing session (with resumption) for 2 h
 const START_WINDOW_MS = 60e3; // a new session must be started within 60 s
-// Technical rule for the search tool (not the teacher instructions, which are configured separately).
-const SEARCH_RULE = 'Use Google Search only when the user asks about recent or current information you cannot know reliably ' +
-  '(news, current events, today\'s or yesterday\'s facts, live prices, weather, schedules). For everything else, answer directly ' +
-  'without searching. After searching, answer briefly in the same language and voice as the rest of the conversation.';
 
 export default {
   async fetch(req, env) {
@@ -47,9 +43,7 @@ export default {
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: lang.voice } } }
       },
-      systemInstruction: { parts: [{ text: lang.instruction + '\n\n' + SEARCH_RULE }] },
-      // Built-in Google Search inside the same Live session (free tier: 500 requests/day, no billing).
-      tools: [{ googleSearch: {} }],
+      systemInstruction: { parts: [{ text: lang.instruction }] },
       contextWindowCompression: { slidingWindow: {} },      // lifts the 15-min audio session limit
       inputAudioTranscription: { languageCodes: [lang.code] },
       outputAudioTranscription: { languageCodes: [lang.code] }
