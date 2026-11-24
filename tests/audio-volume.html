@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<title>Audio Volume Test</title>
+<style>
+  :root{--bg:#000;--s1:#0e0e10;--s2:#16161a;--line:rgba(255,255,255,.08);--tx:#ecebe8;--tx2:#9a9893;--gold:#c9a96e;--ok:#7fae8e;--bad:#c8615e}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,sans-serif;padding:20px 16px 40px}
+  h1{font-weight:500;font-size:22px;margin-bottom:6px}
+  .note{color:var(--tx2);font-size:13px;margin-bottom:16px}
+  .steps{background:var(--s1);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:16px;font-size:14px}
+  .steps li{margin-left:18px;margin-bottom:4px}
+  .mode{background:var(--s1);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+  .mode h2{font-size:16px;font-weight:600;margin-bottom:2px}
+  .mode p{color:var(--tx2);font-size:13px;margin-bottom:10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  button{font:inherit;border:1px solid var(--line);background:var(--s2);color:var(--tx);border-radius:12px;padding:10px 12px;flex:1;min-width:0}
+  button.play{background:var(--gold);color:#111;border:0;font-weight:600}
+  button.sel{outline:2px solid var(--gold)}
+  .status{font-size:12px;color:var(--tx2);margin-top:8px;min-height:16px}
+  .q{font-size:13px;color:var(--tx2);margin:10px 0 6px}
+  #stop{background:rgba(200,97,94,.15);color:var(--bad);border-color:rgba(200,97,94,.35);width:100%;margin-bottom:14px}
+  textarea{width:100%;height:150px;background:var(--s1);color:var(--tx);border:1px solid var(--line);border-radius:12px;padding:10px;font:12px/1.4 ui-monospace,monospace}
+  #env{font-size:12px;color:var(--tx2);margin-bottom:12px;word-break:break-word}
+</style>
+</head>
+<body>
+<h1>Тест громкости: Media или Звонок</h1>
+<p class="note">Отдельная тестовая страница. Не использует Gemini, Worker и данные приложения. Звук — тихий тестовый сигнал.</p>
+<div id="env"></div>
+<ol class="steps">
+  <li>Нажмите <b>▶ Запустить</b> в одном режиме (разрешите микрофон).</li>
+  <li>Пока звучит сигнал, нажмите боковую кнопку громкости.</li>
+  <li>Отметьте, какой ползунок появился и меняется ли громкость сигнала.</li>
+  <li>Нажмите <b>■ Стоп</b> и переходите к следующему режиму.</li>
+  <li>В конце нажмите «Копировать результаты» и пришлите текст.</li>
+</ol>
+<button id="stop">■ Стоп (выключить звук и микрофон)</button>
+<div id="modes"></div>
+<button id="copy" class="play" style="width:100%;margin:6px 0 10px">Копировать результаты</button>
+<textarea id="out" readonly></textarea>
+
+<script>
+'use strict';
+const MODES = [
+  { id: 'A', title: 'A. Как в приложении сейчас', desc: 'Микрофон с эхоподавлением, шумоподавлением и автоусилением; звук через Web Audio (24 kHz).',
+    mic: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, out: 'webaudio' },
+  { id: 'B', title: 'B. Микрофон без обработки', desc: 'Эхоподавление, шумоподавление и автоусиление выключены; звук через Web Audio.',
+    mic: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, out: 'webaudio' },
+  { id: 'C', title: 'C. Эхоподавление + элемент <audio>', desc: 'Микрофон как в приложении; звук через обычный элемент <audio>.',
+    mic: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }, out: 'element' },
+  { id: 'D', title: 'D. Без обработки + элемент <audio>', desc: 'Микрофон без обработки; звук через элемент <audio>.',
+    mic: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, out: 'element' },
+  { id: 'E', title: 'E. Только эхоподавление', desc: 'Эхоподавление включено, шумоподавление и автоусиление выключены; Web Audio.',
+    mic: { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 1 }, out: 'webaudio' },
+  { id: 'F', title: 'F. Контроль: без микрофона (Web Audio)', desc: 'Микрофон не открывается. Ожидается обычная громкость Media.', mic: null, out: 'webaudio' },
+  { id: 'G', title: 'G. Контроль: без микрофона (<audio>)', desc: 'Микрофон не открывается; элемент <audio>.', mic: null, out: 'element' }
+];
+const ANSWERS = [['media', 'Медиа'], ['call', 'Звонок'], ['other', 'Другой'], ['none', 'Не появился']];
+const CHANGE = [['yes', 'Громкость меняется'], ['no', 'Не меняется']];
+const results = {};
+let cur = null;
+
+document.getElementById('env').textContent = 'Браузер: ' + navigator.userAgent;
+
+// Soft test tone: two-note chime every 1.2 s, ~-18 dBFS, 24 kHz mono (same rate as Gemini audio).
+function makeTone(rate = 24000) {
+  const len = Math.round(rate * 1.2), d = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    const t = i / rate;
+    const env1 = t < 0.45 ? Math.min(1, t / 0.01) * Math.exp(-t * 5) : 0;
+    const t2 = t - 0.3, env2 = t2 > 0 && t2 < 0.6 ? Math.min(1, t2 / 0.01) * Math.exp(-t2 * 5) : 0;
+    d[i] = 0.12 * (env1 * Math.sin(2 * Math.PI * 523.25 * t) + env2 * Math.sin(2 * Math.PI * 659.25 * t));
+  }
+  return { d, rate };
+}
+function wavUrl({ d, rate }) {
+  const b = new ArrayBuffer(44 + d.length * 2), v = new DataView(b), w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + d.length * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, d.length * 2, true);
+  for (let i = 0; i < d.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 0x7fff, true);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+}
+const TONE = makeTone(); const TONE_URL = wavUrl(TONE);
+
+async function start(m, statusEl) {
+  await stop();
+  cur = { m };
+  try {
+    if (m.mic) {
+      cur.stream = await navigator.mediaDevices.getUserMedia({ audio: m.mic });
+      // keep the mic "in use" like the app does (audio graph reading the mic)
+      cur.inCtx = new AudioContext();
+      cur.inCtx.createMediaStreamSource(cur.stream).connect(cur.inCtx.createAnalyser());
+    }
+    if (m.out === 'webaudio') {
+      cur.ctx = new AudioContext({ sampleRate: 24000 });
+      const buf = cur.ctx.createBuffer(1, TONE.d.length, TONE.rate); buf.copyToChannel(TONE.d, 0);
+      const src = cur.ctx.createBufferSource(); src.buffer = buf; src.loop = true; src.connect(cur.ctx.destination); src.start();
+      if (cur.ctx.state === 'suspended') await cur.ctx.resume();
+    } else {
+      cur.el = new Audio(TONE_URL); cur.el.loop = true; await cur.el.play();
+    }
+    const s = cur.stream?.getAudioTracks()[0]?.getSettings?.() || null;
+    const info = s ? `микрофон открыт · AEC=${s.echoCancellation} NS=${s.noiseSuppression} AGC=${s.autoGainControl}` : 'микрофон не используется';
+    statusEl.textContent = '▶ звучит · ' + info;
+    results[m.id] = Object.assign(results[m.id] || {}, { settings: info });
+    render();
+  } catch (e) { statusEl.textContent = 'Ошибка: ' + e.name + ' ' + e.message; await stop(); }
+}
+async function stop() {
+  if (!cur) return;
+  try { cur.el?.pause(); } catch {}
+  cur.stream?.getTracks().forEach(t => t.stop());
+  await cur.ctx?.close().catch(() => {}); await cur.inCtx?.close().catch(() => {});
+  cur = null;
+  document.querySelectorAll('.status').forEach(s => { if (s.textContent.startsWith('▶')) s.textContent = 'остановлено'; });
+}
+document.getElementById('stop').onclick = stop;
+
+const root = document.getElementById('modes');
+for (const m of MODES) {
+  const el = document.createElement('div'); el.className = 'mode';
+  el.innerHTML = `<h2>${m.title}</h2><p>${m.desc.replace(/</g, '&lt;')}</p>
+    <div class="row"><button class="play">▶ Запустить</button></div>
+    <div class="status"></div>
+    <div class="q">Какой ползунок появился при нажатии боковой кнопки?</div><div class="row slider"></div>
+    <div class="q">Громкость сигнала:</div><div class="row change"></div>`;
+  const st = el.querySelector('.status');
+  el.querySelector('.play').onclick = () => start(m, st);
+  const mk = (box, list, key) => list.forEach(([v, label]) => {
+    const b = document.createElement('button'); b.textContent = label;
+    b.onclick = () => { (results[m.id] ||= {})[key] = label; box.querySelectorAll('button').forEach(x => x.classList.toggle('sel', x === b)); render(); };
+    box.appendChild(b);
+  });
+  mk(el.querySelector('.slider'), ANSWERS, 'slider'); mk(el.querySelector('.change'), CHANGE, 'change');
+  root.appendChild(el);
+}
+function render() {
+  document.getElementById('out').value = 'Audio volume test — ' + navigator.userAgent + '\n' +
+    MODES.map(m => { const r = results[m.id] || {}; return `${m.id}: ползунок=${r.slider || '—'}; громкость=${r.change || '—'}; ${r.settings || ''}`; }).join('\n');
+}
+render();
+document.getElementById('copy').onclick = async () => {
+  const t = document.getElementById('out'); t.select();
+  try { await navigator.clipboard.writeText(t.value); } catch { document.execCommand('copy'); }
+  document.getElementById('copy').textContent = 'Скопировано ✓';
+};
+</script>
+</body>
+</html>
