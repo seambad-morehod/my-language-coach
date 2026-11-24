@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
-<title>Live Media Test</title>
+<title>Live Media Test 3</title>
 <style>
   :root{--bg:#000;--s1:#0e0e10;--s2:#16161a;--s3:#202026;--line:rgba(255,255,255,.08);--tx:#ecebe8;--tx2:#9a9893;--gold:#c9a96e;--ok:#7fae8e;--bad:#c8615e;--en:#7d93c4}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -34,7 +34,7 @@
 </style>
 </head>
 <body>
-<h1>Тест 2: Gemini через «Медиа»</h1>
+<h1>Тест 3: Gemini через «Медиа»</h1>
 <p class="note">Отдельная тестовая страница. Основное приложение, его звук и статистика не используются. Сессия Gemini — настоящая, через тот же Worker.</p>
 
 <div class="card">
@@ -42,7 +42,8 @@
     <li>Выберите язык и нажмите <b>Начать</b>. Разрешите микрофон.</li>
     <li>Во время ответа Gemini нажмите боковую кнопку громкости — какой ползунок?</li>
     <li>Поговорите 3–5 минут обычным голосом, телефон в руке, <b>без наушников</b>.</li>
-    <li>Попробуйте перебить Gemini голосом посреди ответа.</li>
+    <li>Попробуйте перебить Gemini посреди ответа (голосом или кнопкой «Перебить»).</li>
+    <li>Если время есть — повторите во втором режиме перебивания и сравните.</li>
     <li>Ответьте на вопросы ниже и нажмите «Копировать результаты».</li>
   </ol>
 </div>
@@ -50,12 +51,12 @@
 <div class="card">
   <div class="row">
     <select id="lang"><option value="en">English (US)</option><option value="lv">Latviešu</option></select>
-    <select id="hang"><option value="250">Пауза после ответа 0,25 с</option><option value="400" selected>0,4 с</option><option value="700">0,7 с</option></select>
-    <select id="sens"><option value="4">Перебивание: трудно</option><option value="2.5" selected>Перебивание: средне</option><option value="1.8">Перебивание: легко</option></select>
+    <select id="mode"><option value="voice" selected>Перебивание: голосом + кнопкой</option><option value="button">Перебивание: только кнопкой</option></select>
+    <select id="sens"><option value="3">Голосом: трудно</option><option value="2" selected>Голосом: средне</option><option value="1.5">Голосом: легко</option></select>
   </div>
-  <div class="row" style="margin-top:8px"><label><input type="checkbox" id="barge" checked> Разрешить перебивать Gemini голосом</label></div>
   <div class="row" id="passRow" style="margin-top:8px;display:none"><input id="pass" type="password" placeholder="Парольная фраза" style="flex:1"></div>
   <div class="row" style="margin-top:10px"><button class="go" id="start">Начать</button><button class="end" id="stop">Завершить</button></div>
+  <div class="row" style="margin-top:8px"><button id="interrupt">✋ Перебить Gemini</button></div>
   <div class="gate" id="gate">—</div>
   <label>Микрофон (жёлтая метка — порог перебивания)</label>
   <div class="meter"><i id="micbar"></i><b id="thr"></b></div>
@@ -66,6 +67,8 @@
     <div>Утечка эха (оценка): <b id="coup">—</b></div>
     <div>Ответов Gemini: <b id="nturns">0</b></div>
     <div>Перебиваний голосом: <b id="nbarge">0</b></div>
+    <div>…из них ложных (эхо): <b id="nfalse">0</b></div>
+    <div>Перебиваний кнопкой: <b id="nbtn">0</b></div>
     <div>Ответ Gemini через: <b id="lat">—</b></div>
     <div>Микрофон снова слушает через: <b id="resume">—</b></div>
     <div>Подозрений на эхо: <b id="necho">0</b></div>
@@ -80,8 +83,9 @@
   <div class="q">2. Громкость голоса Gemini меняется кнопками?</div><div class="row" data-q="volume" data-a="Да|Нет"></div>
   <div class="q">3. Gemini слышал сам себя (отвечал сам себе, обрывался без причины)?</div><div class="row" data-q="echo" data-a="Нет|Иногда|Часто"></div>
   <div class="q">4. Приложение обрывало ваши фразы (синий текст неполный)?</div><div class="row" data-q="cut" data-a="Нет|Иногда|Часто"></div>
-  <div class="q">5. Перебивание Gemini голосом:</div><div class="row" data-q="bargein" data-a="Работает|Плохо|Не пробовал"></div>
-  <div class="q">6. Скорость и качество разговора по сравнению с приложением:</div><div class="row" data-q="quality" data-a="Так же|Немного хуже|Заметно хуже"></div>
+  <div class="q">5. Перебивание голосом:</div><div class="row" data-q="bargein" data-a="Работает|Плохо|Не пробовал"></div>
+  <div class="q">6. Какой режим лучше?</div><div class="row" data-q="best" data-a="Голос+кнопка|Только кнопка|Не сравнивал"></div>
+  <div class="q">7. Скорость и качество разговора по сравнению с приложением:</div><div class="row" data-q="quality" data-a="Так же|Немного хуже|Заметно хуже"></div>
   <button class="go" id="copy" style="width:100%;margin-top:12px">Копировать результаты</button>
   <textarea id="out" readonly style="margin-top:10px"></textarea>
 </div>
