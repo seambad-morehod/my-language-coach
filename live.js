@@ -9,8 +9,8 @@
    - while Gemini speaks, mic audio is not sent (compared against the loudest output in the last 0.45 s,
      because echo arrives late);
    - after Gemini stops, sending resumes once the echo tail has died down (0.15–0.9 s);
-   - voice barge-in: clearly louder-than-echo speech for ~0.3 s pauses Gemini; if Gemini does not confirm
-     it heard the user within 1.2 s, playback resumes where it paused (protects against false triggers);
+   - voice barge-in: clearly louder-than-echo speech for ~0.3 s stops Gemini immediately and sends the
+     user's speech (incl. the last 0.5 s) — same behaviour as test 3 verified on the phone;
    - interrupt() stops Gemini immediately (used by the mic button). */
 const Live = (() => {
   const WS_URL = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
@@ -36,7 +36,7 @@ const Live = (() => {
 
   // Echo gate tuning (from test 3)
   const ECHO_WIN = 0.45, GRACE = 0.6, MIN_TAIL = 0.15, MAX_TAIL = 0.9;
-  const SENS = 2, BARGE_CHUNKS = 6, PREROLL = 10, CONFIRM_MS = 1200;
+  const SENS = 2, BARGE_CHUNKS = 6, PREROLL = 10;
 
   let s = null; // active session state
 
@@ -62,7 +62,7 @@ const Live = (() => {
     if (s) stop();
     s = { lang, cb, muted: false, handle: null, closing: false, reconnects: 0, playAt: 0, sources: new Set(), coachText: '', cancelled: new Set(),
           playEnd: -Infinity, replyStart: 0, playEndWall: 0, segs: [], lastRef: 0, coupling: 0.3, gate: 'send', preroll: [], loud: 0,
-          bargeActive: false, pending: null, dropOld: false, turnOn: false };
+          bargeActive: false, dropOld: false, turnOn: false };
     const me = s;
     cb.status?.('connecting');
     const tk = await fetchToken(lang);          // throws on auth / quota errors
@@ -118,8 +118,8 @@ const Live = (() => {
     if (m.toolCall) for (const fc of m.toolCall.functionCalls || []) runTool(fc);
     if (m.toolCallCancellation) for (const id of m.toolCallCancellation.ids || []) s.cancelled.add(id);
     const sc = m.serverContent; if (!sc) return;
-    if (sc.interrupted) { confirmBarge(); flushPlayback(); s.dropOld = false; s.turnOn = false; }
-    if (sc.inputTranscription?.text) { confirmBarge(); s.cb.user?.(sc.inputTranscription.text); }
+    if (sc.interrupted) { flushPlayback(); s.dropOld = false; s.turnOn = false; }
+    if (sc.inputTranscription?.text) s.cb.user?.(sc.inputTranscription.text);
     for (const p of sc.modelTurn?.parts || []) {
       if (!p.inlineData?.data || s.dropOld) continue;
       if (!s.turnOn) { s.turnOn = true; s.bargeActive = false; s.coachText = ''; }
@@ -199,7 +199,7 @@ const Live = (() => {
         else if (ratio < s.coupling * 1.2) s.coupling = s.coupling * 0.97 + ratio * 0.03;
       }
       const thr = Math.max(0.035, s.coupling * ref * SENS);
-      if (ct - s.replyStart >= GRACE && rms > thr) { if (++s.loud >= BARGE_CHUNKS) softBarge(); }
+      if (ct - s.replyStart >= GRACE && rms > thr) { if (++s.loud >= BARGE_CHUNKS) voiceBarge(); }
       else s.loud = Math.max(0, s.loud - 1);
       return;
     }
@@ -212,26 +212,14 @@ const Live = (() => {
     s.gate = 'send';
     send(pcm);
   }
-  // Voice barge-in: pause Gemini and let the user through; resume if Gemini doesn't confirm.
-  function softBarge() {
-    s.bargeActive = true; openGate(true); s.gate = 'barge';
-    s.outCtx.suspend().catch(() => {});
-    clearTimeout(s.pending);
-    s.pending = setTimeout(() => {   // no confirmation → it was probably echo: continue Gemini's reply
-      if (!s || !s.pending) return;
-      s.pending = null; s.bargeActive = false; s.gate = 'block'; s.coupling *= 1.3;
-      s.outCtx.resume().catch(() => {});
-    }, CONFIRM_MS);
-  }
-  function confirmBarge() {
-    if (!s?.pending) return;
-    clearTimeout(s.pending); s.pending = null;
-    s.dropOld = s.turnOn; flushPlayback();
+  // Voice barge-in (as in test 3): stop Gemini now, drop the rest of this reply, send the user's speech.
+  function voiceBarge() {
+    openGate(true);
+    s.dropOld = s.turnOn; flushPlayback(); s.bargeActive = true; s.gate = 'barge';
   }
   // Mic button while Gemini speaks: stop immediately and listen.
   function interrupt() {
     if (!s || !isSpeaking()) return false;
-    clearTimeout(s.pending); s.pending = null;
     s.dropOld = s.turnOn; flushPlayback(); s.bargeActive = true; s.gate = 'barge'; s.preroll = [];
     return true;
   }
@@ -240,7 +228,7 @@ const Live = (() => {
 
   function stop() {
     const me = s; if (!me) return; s = null;
-    me.closing = true; clearTimeout(me.pending);
+    me.closing = true;
     try { me.ws?.close(); } catch {}
     try { me.src?.disconnect(); me.node?.disconnect(); } catch {}
     me.micStream?.getTracks().forEach(t => t.stop());
