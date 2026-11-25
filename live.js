@@ -3,7 +3,13 @@
    Auth uses a short-lived ephemeral token from our Worker; the API key never reaches the browser.
    Protocol: https://ai.google.dev/api/live
 
-   Audio routing (verified on Galaxy S25 Ultra / Samsung Internet 31, tests/live-media-test.html v3):
+   Primary audio mode "aec" (verified on Galaxy S25 Ultra / Samsung Internet 31, tests/aec-test.html):
+   the mic is opened WITHOUT browser echo cancellation (Android keeps the Media volume stream) and
+   WebRTC AEC3 (wasm, aec-worklet.js) removes Gemini's voice using the exact speaker signal as reference.
+   The mic is sent to Gemini continuously; when the user's voice is detected while Gemini speaks,
+   Gemini's playback stops at once (Gemini also stops server-side when it hears the user).
+
+   Fallback mode "gate" (only if AEC3 cannot load; tests/live-media-test.html v3):
    the mic is opened WITHOUT browser echo cancellation, so Android keeps the "Media" stream and the
    hardware volume keys control Gemini's voice. Echo is handled here instead:
    - while Gemini speaks, mic audio is not sent (compared against the loudest output in the last 0.45 s,
@@ -70,16 +76,64 @@ const Live = (() => {
     s.token = tk.token; s.model = tk.model;
 
     // Audio graph — echoCancellation:false keeps Android on the Media stream (see header)
-    s.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-    if (s !== me) { me.micStream.getTracks().forEach(t => t.stop()); return; }
-    s.inCtx = new AudioContext();
-    s.outCtx = new AudioContext({ sampleRate: 24000 });
-    await s.inCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
-    s.src = s.inCtx.createMediaStreamSource(s.micStream);
-    s.node = new AudioWorkletNode(s.inCtx, 'mlc-rec');
-    s.node.port.onmessage = e => onMic(e.data);
-    s.src.connect(s.node);
+    try { await setupAec(me); }
+    catch (e) {
+      if (s !== me) return;
+      console.warn('AEC3 unavailable, using mic gate fallback:', e);
+      teardownAudio(me);
+      await setupGate(me);
+    }
+    if (s !== me) return;
     connect();
+  }
+
+  // Primary: one 48 kHz context; Gemini's voice → speaker and → AEC reference; mic → AEC.
+  async function setupAec(me) {
+    const wasm = await WebAssembly.compileStreaming(fetch(new URL('aec3/webrtc-audio-processing.wasm', document.baseURI)));
+    me.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+    if (s !== me) { me.micStream.getTracks().forEach(t => t.stop()); throw new Error('stopped'); }
+    const ctx = me.inCtx = me.outCtx = new AudioContext({ sampleRate: 48000 });
+    if (ctx.sampleRate % 16000) throw new Error('sample rate ' + ctx.sampleRate);
+    await ctx.audioWorklet.addModule(new URL('aec-worklet.js', document.baseURI));
+    me.node = new AudioWorkletNode(ctx, 'mlc-aec', { numberOfInputs: 2, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit', processorOptions: { module: wasm } });
+    me.node.port.onmessage = e => onMicAec(e.data);
+    me.node.onprocessorerror = () => { if (s === me) me.cb.error?.('Echo canceller stopped'); };
+    const sink = ctx.createGain(); sink.gain.value = 0; me.node.connect(sink); sink.connect(ctx.destination);   // keeps the worklet running
+    me.src = ctx.createMediaStreamSource(me.micStream); me.src.connect(me.node, 0, 0);
+    me.bus = ctx.createGain(); me.bus.connect(ctx.destination); me.bus.connect(me.node, 0, 1);              // speaker + AEC reference
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    me.mode = 'aec'; me.floor = 0.01; me.voiceRun = 0;
+  }
+  // Fallback: mic gate (no AEC) — pauses the mic while Gemini speaks.
+  async function setupGate(me) {
+    me.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    if (s !== me) { me.micStream.getTracks().forEach(t => t.stop()); return; }
+    me.inCtx = new AudioContext();
+    me.outCtx = new AudioContext({ sampleRate: 24000 });
+    await me.inCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
+    me.src = me.inCtx.createMediaStreamSource(me.micStream);
+    me.node = new AudioWorkletNode(me.inCtx, 'mlc-rec');
+    me.node.port.onmessage = e => onMic(e.data);
+    me.src.connect(me.node);
+    me.mode = 'gate';
+  }
+  function teardownAudio(me) {
+    try { me.src?.disconnect(); me.node?.disconnect(); } catch {}
+    me.micStream?.getTracks().forEach(t => t.stop());
+    me.inCtx?.close().catch(() => {}); if (me.outCtx !== me.inCtx) me.outCtx?.close().catch(() => {});
+    me.src = me.node = me.micStream = me.inCtx = me.outCtx = me.bus = null;
+  }
+
+  // AEC mode: cleaned mic is always sent; the user's voice during Gemini's speech stops playback at once.
+  function onMicAec({ pcm, rms, vad, stats }) {
+    if (!s || s.mode !== 'aec') return;
+    if (stats) s.aecStats = stats;
+    if (s.muted) return;
+    const voice = vad >= 0.5 && rms > Math.max(0.006, s.floor * 3);
+    if (!voice) s.floor = s.floor * 0.98 + Math.min(rms, 0.05) * 0.02;
+    if (voice && isSpeaking()) { if (++s.voiceRun >= 2) { s.voiceRun = 0; s.dropOld = s.turnOn; flushPlayback(); } }
+    else s.voiceRun = 0;
+    send(pcm);
   }
 
   function connect() {
@@ -158,7 +212,7 @@ const Live = (() => {
     const ctx = s.outCtx, pcm = new Int16Array(buf), f = new Float32Array(pcm.length); let sq = 0;
     for (let i = 0; i < pcm.length; i++) { f[i] = pcm[i] / 32768; sq += f[i] * f[i]; }
     const ab = ctx.createBuffer(1, f.length, 24000); ab.copyToChannel(f, 0);
-    const src = ctx.createBufferSource(); src.buffer = ab; src.connect(ctx.destination);
+    const src = ctx.createBufferSource(); src.buffer = ab; src.connect(s.bus || ctx.destination);
     if (!s.sources.size && ctx.currentTime > s.playEnd) s.replyStart = Math.max(s.playAt, ctx.currentTime + 0.03);
     s.playAt = Math.max(s.playAt, ctx.currentTime + 0.03);
     src.start(s.playAt);
@@ -232,8 +286,9 @@ const Live = (() => {
     try { me.ws?.close(); } catch {}
     try { me.src?.disconnect(); me.node?.disconnect(); } catch {}
     me.micStream?.getTracks().forEach(t => t.stop());
-    me.inCtx?.close().catch(() => {}); me.outCtx?.close().catch(() => {});
+    me.inCtx?.close().catch(() => {}); if (me.outCtx !== me.inCtx) me.outCtx?.close().catch(() => {});
   }
 
-  return { enabled, start, stop, setMuted, getPass, setPass, interrupt, speaking: isSpeaking, active: () => !!s };
+  return { enabled, start, stop, setMuted, getPass, setPass, interrupt, speaking: isSpeaking, active: () => !!s,
+           mode: () => s?.mode || null, aecStats: () => s?.aecStats || null };
 })();
