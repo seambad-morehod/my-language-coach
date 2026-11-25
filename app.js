@@ -201,6 +201,8 @@ function setMic(on) {
 $('#mic').addEventListener('click', () => {
   if (!conv.running) return;
   if (Live.enabled() && !Live.active() && !conv.lineTimer) { setMic(true); beginLive(); return; }
+  // While Gemini is speaking, the mic button interrupts it and listens (no extra UI element)
+  if (Live.active() && Live.speaking() && Live.interrupt()) { setMic(true); update(); return; }
   setMic(!conv.mic); update();
 });
 $('#btn-start').addEventListener('click', () => startConversation());
