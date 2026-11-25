@@ -6,8 +6,11 @@
    Primary audio mode "aec" (verified on Galaxy S25 Ultra / Samsung Internet 31, tests/aec-test.html):
    the mic is opened WITHOUT browser echo cancellation (Android keeps the Media volume stream) and
    WebRTC AEC3 (wasm, aec-worklet.js) removes Gemini's voice using the exact speaker signal as reference.
-   The mic is sent to Gemini continuously; when the user's voice is detected while Gemini speaks,
-   Gemini's playback stops at once (Gemini also stops server-side when it hears the user).
+   The mic is sent to Gemini continuously, except while a possible interruption is being checked:
+   a loud sound during Gemini's speech ducks Gemini to 25% and holds the mic audio (~0.4 s check).
+   Real speech (voiced, ≥0.3 s) → Gemini stops and the held audio is sent; coughs, sneezes, knocks and
+   short noises (unvoiced or too short) → the held audio is dropped (Gemini never hears it, so it does
+   not interrupt itself server-side) and Gemini continues at full volume from where it was.
 
    Fallback mode "gate" (only if AEC3 cannot load; tests/live-media-test.html v3):
    the mic is opened WITHOUT browser echo cancellation, so Android keeps the "Media" stream and the
@@ -68,7 +71,7 @@ const Live = (() => {
     if (s) stop();
     s = { lang, cb, muted: false, handle: null, closing: false, reconnects: 0, playAt: 0, sources: new Set(), coachText: '', cancelled: new Set(),
           playEnd: -Infinity, replyStart: 0, playEndWall: 0, segs: [], lastRef: 0, coupling: 0.3, gate: 'send', preroll: [], loud: 0,
-          bargeActive: false, dropOld: false, turnOn: false };
+          bargeActive: false, dropOld: false, turnOn: false, check: null, stats: {} };
     const me = s;
     cb.status?.('connecting');
     const tk = await fetchToken(lang);          // throws on auth / quota errors
@@ -124,16 +127,42 @@ const Live = (() => {
     me.src = me.node = me.micStream = me.inCtx = me.outCtx = me.bus = null;
   }
 
-  // AEC mode: cleaned mic is always sent; the user's voice during Gemini's speech stops playback at once.
-  function onMicAec({ pcm, rms, vad, stats }) {
+  // AEC mode: smart barge-in (see header). States: idle → check → (confirm | reject) → idle.
+  const DUCK = 0.25, CONFIRM_VOICED_MS = 350, QUIET_REJECT_MS = 300, MAX_CHECK_MS = 1200, VOICED = 0.5, CARRY_MS = 700;
+  function duck(on) { if (s.bus) s.bus.gain.setTargetAtTime(on ? DUCK : 1, s.outCtx.currentTime, on ? 0.02 : 0.08); }
+  function onMicAec({ pcm, rms, vad, voiced, stats }) {
     if (!s || s.mode !== 'aec') return;
     if (stats) s.aecStats = stats;
-    if (s.muted) return;
-    const voice = vad >= 0.5 && rms > Math.max(0.006, s.floor * 3);
-    if (!voice) s.floor = s.floor * 0.98 + Math.min(rms, 0.05) * 0.02;
-    if (voice && isSpeaking()) { if (++s.voiceRun >= 2) { s.voiceRun = 0; s.dropOld = s.turnOn; flushPlayback(); } }
-    else s.voiceRun = 0;
+    if (s.muted) { if (s.check) endCheck(false); return; }
+    const loud = rms > Math.max(0.006, s.floor * 3);
+    const speechy = loud && vad >= 0.5 && voiced >= VOICED;
+    // noise floor: follows quiet levels quickly, rises slowly under steady background noise (fan, street)
+    s.floor = rms < s.floor ? s.floor * 0.9 + rms * 0.1 : Math.min(0.08, s.floor * 1.01);
+
+    if (s.check) {
+      const c = s.check; c.held.push(pcm); c.ms += 50;
+      if (speechy) c.voicedMs += 50;
+      c.quietMs = loud ? 0 : c.quietMs + 50;
+      if (!isSpeaking()) return endCheck(true);                       // Gemini finished meanwhile: just deliver it
+      if (c.voicedMs >= CONFIRM_VOICED_MS) { s.dropOld = s.turnOn; flushPlayback(); return endCheck(true); }   // real speech
+      if (c.quietMs >= QUIET_REJECT_MS || c.ms >= MAX_CHECK_MS) return endCheck(false);                        // cough / noise
+      return;
+    }
+    if (isSpeaking() && loud && (vad >= 0.5 || voiced >= VOICED)) {   // possible interruption: duck and hold
+      // a check rejected moments ago that already contained voiced sound is carried over (syllable gaps),
+      // so the start of a real phrase is neither lost nor needs to be repeated
+      const prev = s.lastRejected && performance.now() - s.lastRejected.at < CARRY_MS && s.lastRejected.voicedMs > 0 ? s.lastRejected : null;
+      s.check = { held: prev ? [...prev.held, pcm] : [pcm], ms: 50, voicedMs: (prev ? prev.voicedMs : 0) + (speechy ? 50 : 0), quietMs: 0 };
+      s.lastRejected = null;
+      duck(true); return;
+    }
     send(pcm);
+  }
+  function endCheck(deliver) {
+    const c = s.check; s.check = null; duck(false);
+    if (deliver) c.held.forEach(send);
+    else s.lastRejected = { held: c.held.slice(-16), voicedMs: c.voicedMs, at: performance.now() };
+    s.stats.checks = (s.stats.checks || 0) + 1; s.stats[deliver ? 'barges' : 'ignored'] = (s.stats[deliver ? 'barges' : 'ignored'] || 0) + 1;
   }
 
   function connect() {
@@ -274,6 +303,8 @@ const Live = (() => {
   // Mic button while Gemini speaks: stop immediately and listen.
   function interrupt() {
     if (!s || !isSpeaking()) return false;
+    if (s.check) { const c = s.check; s.check = null; c.held.forEach(send); }
+    if (s.bus) s.bus.gain.setTargetAtTime(1, s.outCtx.currentTime, 0.02);
     s.dropOld = s.turnOn; flushPlayback(); s.bargeActive = true; s.gate = 'barge'; s.preroll = [];
     return true;
   }
@@ -290,5 +321,5 @@ const Live = (() => {
   }
 
   return { enabled, start, stop, setMuted, getPass, setPass, interrupt, speaking: isSpeaking, active: () => !!s,
-           mode: () => s?.mode || null, aecStats: () => s?.aecStats || null };
+           mode: () => s?.mode || null, aecStats: () => s?.aecStats || null, bargeStats: () => s ? { ...s.stats, checking: !!s.check } : null };
 })();
