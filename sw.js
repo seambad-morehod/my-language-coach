@@ -1,4 +1,4 @@
-const CACHE = 'mlc-v7';
+const CACHE = 'mlc-v8';
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './config.js', './live.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))); self.skipWaiting(); });
