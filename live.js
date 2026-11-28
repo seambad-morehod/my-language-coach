@@ -53,10 +53,15 @@ const Live = (() => {
     s.token = tk.token; s.model = tk.model;
 
     // Audio graph
+    // Output context first, with an inaudible "priming" sound playing BEFORE the mic opens: on Samsung Internet /
+    // Chromium for Android, opening the mic while the page plays nothing switches the phone to the in-call
+    // stream (loud, volume keys don't work) — this only happened on the first conversation after app start.
+    s.outCtx = new AudioContext({ sampleRate: 24000 });
+    await primeOutput(s.outCtx);
+    if (s !== me) return;
     s.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
     if (s !== me) { me.micStream.getTracks().forEach(t => t.stop()); return; }
     s.inCtx = new AudioContext();
-    s.outCtx = new AudioContext({ sampleRate: 24000 });
     await s.inCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' })));
     s.src = s.inCtx.createMediaStreamSource(s.micStream);
     s.node = new AudioWorkletNode(s.inCtx, 'mlc-rec');
@@ -66,6 +71,18 @@ const Live = (() => {
     };
     s.src.connect(s.node);
     connect();
+  }
+
+  // Plays ~0.6 s of a 30 Hz tone at -50 dBFS (below what a phone speaker can reproduce) and waits 200 ms,
+  // so the page already has active audio output when getUserMedia() is called.
+  async function primeOutput(ctx) {
+    try {
+      if (ctx.state === 'suspended') await ctx.resume();
+      const n = Math.round(ctx.sampleRate * 0.6), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = 0.003 * Math.sin(2 * Math.PI * 30 * i / ctx.sampleRate) * Math.min(1, i / 1200, (n - i) / 1200);
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start();
+      await new Promise(r => setTimeout(r, 200));
+    } catch {}
   }
 
   function connect() {
