@@ -31,12 +31,13 @@ export const SEARCH_TOOL = {
 };
 
 export const SEARCH_RULE =
-  'You can call web_search to look up current information on the internet. Call it only when the user asks about ' +
-  'something recent or changing (weather, news, events, prices, schedules, new developments, details about a specific ' +
-  'place) that you cannot know reliably. For ordinary conversation, answer directly without searching. While waiting ' +
-  'for results you may say a few words such as "let me check". When results arrive, answer briefly and naturally in the ' +
-  'same language as the conversation, mentioning the source name if useful. If the search fails or the limit is reached, ' +
-  'say you could not check online and answer from your own knowledge, making clear it may be out of date.';
+  'INTERNET SEARCH: You can call web_search for current or changing information you cannot know reliably — weather, ' +
+  'news, current events, prices, schedules, opening hours, recent developments, details about a specific place. For ' +
+  'everything else, answer from your own knowledge without searching. Do not say that you are searching or about to ' +
+  'check; call the tool silently and, when the result arrives, give the answer directly and briefly in the conversation ' +
+  'language, as part of the normal conversation. Mention a source only if the user asks. If the search fails or the ' +
+  'daily limit is reached, say briefly that you couldn\'t check the latest information and answer from what you know, ' +
+  'noting it may be out of date. Never suggest searching for something else.';
 
 export async function webSearch(args, lang, env, ctx) {
   const query = String(args?.query || '').trim().slice(0, 300);

@@ -4,6 +4,7 @@
 // Docs: https://ai.google.dev/gemini-api/docs/ephemeral-tokens , https://ai.google.dev/api/live
 import { LANGUAGES } from './languages.js';
 import { SEARCH_TOOL, SEARCH_RULE, webSearch } from './search.js';
+import { COMMON, REMINDER } from './instructions.js';
 
 const TOKEN_URL = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const SESSION_HOURS = 2;      // token may carry an ongoing session (with resumption) for 2 h
@@ -53,7 +54,7 @@ export default {
         responseModalities: ['AUDIO'],
         speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: lang.voice } } }
       },
-      systemInstruction: { parts: [{ text: lang.instruction + '\n\n' + SEARCH_RULE }] },
+      systemInstruction: { parts: [{ text: [COMMON, lang.instruction, SEARCH_RULE, REMINDER].join('\n\n') }] },
       tools: [SEARCH_TOOL],
       contextWindowCompression: { slidingWindow: {} },      // lifts the 15-min audio session limit
       inputAudioTranscription: { languageCodes: [lang.code] },
